@@ -14,39 +14,67 @@ def root():
 
 
 @app.get("/download/")
-def download_video(url: str):
+def download_video(url: str, format: str = "video"):
     try:
         video_id = str(uuid.uuid4())  # unique ID for file naming
 
+        # Configure yt_dlp options based on format
+        if format.lower() not in ["video", "audio"]:
+            raise HTTPException(status_code=400, detail="Invalid format. Use 'video' or 'audio'.")
+
         ydl_opts = {
-            "format": "bestvideo+bestaudio/best",  # best quality
-            "merge_output_format": "mp4",          # force mp4
             "outtmpl": f"{video_id}.%(ext)s",
-            "noplaylist": True,                    # avoid whole playlists
+            "noplaylist": True,  # avoid downloading playlists
             "quiet": True,
         }
+
+        if format.lower() == "video":
+            ydl_opts.update({
+                "format": "bestvideo+bestaudio/best",  # best quality video
+                "merge_output_format": "mp4",         # force MP4
+            })
+        else:  # audio
+            ydl_opts.update({
+                "format": "bestaudio",                # best audio quality
+                "extractaudio": True,                 # extract audio
+                "audioformat": "mp3",                 # convert to MP3
+                "postprocessors": [{
+                    "key": "FFmpegExtractAudio",      # use ffmpeg to extract audio
+                    "preferredcodec": "mp3",
+                    "preferredquality": "192",        # set audio quality (192 kbps)
+                }],
+            })
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             downloaded_file = ydl.prepare_filename(info)
 
+            # For audio, yt_dlp may change the extension after postprocessing
+            if format.lower() == "audio":
+                downloaded_file = downloaded_file.replace(".webm", ".mp3").replace(".m4a", ".mp3")
+
         if not downloaded_file or not os.path.exists(downloaded_file):
             raise HTTPException(status_code=500, detail="Download failed: file not found.")
 
-        # Metadata for response (can be returned if you want JSON instead of direct file)
+        # Metadata for response
         metadata = {
             "title": info.get("title"),
             "uploader": info.get("uploader"),
             "duration": info.get("duration"),
             "webpage_url": info.get("webpage_url"),
-            "ext": info.get("ext"),
+            "ext": "mp3" if format.lower() == "audio" else "mp4",
         }
 
-        # Return video file as response, auto-deleting after serving
+        # Determine media type and filename
+        media_type = "audio/mpeg" if format.lower() == "audio" else "video/mp4"
+        file_extension = "mp3" if format.lower() == "audio" else "mp4"
+        filename = f"{info.get('title', 'media')}.{file_extension}"
+
+        # Return file response with cleanup
         return FileResponse(
             path=downloaded_file,
-            media_type="video/mp4",
-            filename=f"{info.get('title','video')}.mp4",
+            media_type=media_type,
+            filename=filename,
             background=BackgroundTask(lambda: os.remove(downloaded_file) if os.path.exists(downloaded_file) else None),
         )
 
