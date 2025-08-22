@@ -5,73 +5,7 @@ import yt_dlp
 import os
 import uuid
 
-app = FastAPI(title="Universal Video/Audio Downloader API 🚀")
-
-
-# --- Normalize Shorts links ---
-def normalize_url(url: str) -> str:
-    if "youtube.com/shorts/" in url:
-        video_id = url.split("/")[-1].split("?")[0]
-        return f"https://www.youtube.com/watch?v={video_id}"
-    return url
-
-
-# --- Build yt-dlp options ---
-def build_ydl_opts(outtmpl: str, mode: str, format_id: str = None):
-    opts = {
-        "outtmpl": outtmpl,
-        "noplaylist": True,
-        "quiet": True,
-        "http_headers": {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/115.0.0.0 Safari/537.36"
-            ),
-            "Accept-Language": "en-US,en;q=0.9",
-        },
-    }
-
-    # Add cookies.txt if available
-    if os.path.exists("cookies.txt"):
-        opts["cookiefile"] = "cookies.txt"
-
-    if mode == "video":
-        if format_id:
-            opts.update({
-                "format": format_id,
-                "merge_output_format": "mp4",
-            })
-        else:
-            opts.update({
-                "format": "bestvideo+bestaudio/best",
-                "merge_output_format": "mp4",
-            })
-    else:  # audio
-        if format_id:
-            opts.update({
-                "format": format_id,
-                "extractaudio": True,
-                "audioformat": "mp3",
-                "postprocessors": [{
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": "192",
-                }],
-            })
-        else:
-            opts.update({
-                "format": "bestaudio",
-                "extractaudio": True,
-                "audioformat": "mp3",
-                "postprocessors": [{
-                    "key": "FFmpegExtractAudio",
-                    "preferredcodec": "mp3",
-                    "preferredquality": "192",
-                }],
-            })
-
-    return opts
+app = FastAPI(title="Universal Video Downloader API 🚀")
 
 
 @app.get("/")
@@ -79,78 +13,40 @@ def root():
     return {"message": "Universal Video Downloader API is running 🚀"}
 
 
-@app.get("/formats/")
-async def get_formats(url: str):
-    try:
-        url = normalize_url(url)
-
-        ydl_opts = build_ydl_opts("%(id)s.%(ext)s", "video")
-
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = ydl.extract_info(url, download=False)
-            formats = info.get("formats", [])
-
-            video_formats, audio_formats = [], []
-            for f in formats:
-                if f.get("vcodec") != "none" and f.get("acodec") != "none":
-                    video_formats.append({
-                        "format_id": f.get("format_id"),
-                        "resolution": f.get("resolution", "Unknown"),
-                        "ext": f.get("ext", "mp4"),
-                        "format_note": f.get("format_note", "Unknown"),
-                        "filesize": f.get("filesize", None),
-                    })
-                elif f.get("acodec") != "none" and f.get("vcodec") == "none":
-                    audio_formats.append({
-                        "format_id": f.get("format_id"),
-                        "ext": f.get("ext", "m4a"),
-                        "format_note": f.get("format_note", "Unknown"),
-                        "filesize": f.get("filesize", None),
-                    })
-
-            return {
-                "title": info.get("title"),
-                "uploader": info.get("uploader"),
-                "duration": info.get("duration"),
-                "webpage_url": info.get("webpage_url"),
-                "video_formats": video_formats,
-                "audio_formats": audio_formats,
-            }
-
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Error fetching formats: {str(e)}")
-
-
 @app.get("/download/")
-def download_video(url: str, format: str = "video", format_id: str = None):
+def download_video(url: str):
     try:
-        url = normalize_url(url)
-        video_id = str(uuid.uuid4())
-        outtmpl = f"{video_id}.%(ext)s"
+        video_id = str(uuid.uuid4())  # unique ID for file naming
 
-        if format.lower() not in ["video", "audio"]:
-            raise HTTPException(status_code=400, detail="Invalid format. Use 'video' or 'audio'.")
-
-        ydl_opts = build_ydl_opts(outtmpl, format.lower(), format_id)
+        ydl_opts = {
+            "format": "bestvideo+bestaudio/best",  # best quality
+            "merge_output_format": "mp4",          # force mp4
+            "outtmpl": f"{video_id}.%(ext)s",
+            "noplaylist": True,                    # avoid whole playlists
+            "quiet": True,
+        }
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
             downloaded_file = ydl.prepare_filename(info)
 
-            if format.lower() == "audio":
-                downloaded_file = downloaded_file.replace(".webm", ".mp3").replace(".m4a", ".mp3")
-
         if not downloaded_file or not os.path.exists(downloaded_file):
             raise HTTPException(status_code=500, detail="Download failed: file not found.")
 
-        media_type = "audio/mpeg" if format.lower() == "audio" else "video/mp4"
-        file_extension = "mp3" if format.lower() == "audio" else "mp4"
-        filename = f"{info.get('title', 'media')}.{file_extension}"
+        # Metadata for response (can be returned if you want JSON instead of direct file)
+        metadata = {
+            "title": info.get("title"),
+            "uploader": info.get("uploader"),
+            "duration": info.get("duration"),
+            "webpage_url": info.get("webpage_url"),
+            "ext": info.get("ext"),
+        }
 
+        # Return video file as response, auto-deleting after serving
         return FileResponse(
             path=downloaded_file,
-            media_type=media_type,
-            filename=filename,
+            media_type="video/mp4",
+            filename=f"{info.get('title','video')}.mp4",
             background=BackgroundTask(lambda: os.remove(downloaded_file) if os.path.exists(downloaded_file) else None),
         )
 
