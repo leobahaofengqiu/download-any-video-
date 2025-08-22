@@ -5,15 +5,10 @@ import yt_dlp
 import os
 import uuid
 
-app = FastAPI(title="Universal Video Downloader API 🚀")
+app = FastAPI(title="Universal Video/Audio Downloader API 🚀")
 
 
-@app.get("/")
-def root():
-    return {"message": "Universal Video Downloader API is running 🚀"}
-
-
-# --- Helper function to normalize Shorts links ---
+# --- Normalize Shorts links ---
 def normalize_url(url: str) -> str:
     if "youtube.com/shorts/" in url:
         video_id = url.split("/")[-1].split("?")[0]
@@ -21,29 +16,81 @@ def normalize_url(url: str) -> str:
     return url
 
 
+# --- Build yt-dlp options ---
+def build_ydl_opts(outtmpl: str, mode: str, format_id: str = None):
+    opts = {
+        "outtmpl": outtmpl,
+        "noplaylist": True,
+        "quiet": True,
+        "http_headers": {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/115.0.0.0 Safari/537.36"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+        },
+    }
+
+    # Add cookies.txt if available
+    if os.path.exists("cookies.txt"):
+        opts["cookiefile"] = "cookies.txt"
+
+    if mode == "video":
+        if format_id:
+            opts.update({
+                "format": format_id,
+                "merge_output_format": "mp4",
+            })
+        else:
+            opts.update({
+                "format": "bestvideo+bestaudio/best",
+                "merge_output_format": "mp4",
+            })
+    else:  # audio
+        if format_id:
+            opts.update({
+                "format": format_id,
+                "extractaudio": True,
+                "audioformat": "mp3",
+                "postprocessors": [{
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": "mp3",
+                    "preferredquality": "192",
+                }],
+            })
+        else:
+            opts.update({
+                "format": "bestaudio",
+                "extractaudio": True,
+                "audioformat": "mp3",
+                "postprocessors": [{
+                    "key": "FFmpegExtractAudio",
+                    "preferredcodec": "mp3",
+                    "preferredquality": "192",
+                }],
+            })
+
+    return opts
+
+
+@app.get("/")
+def root():
+    return {"message": "Universal Video Downloader API is running 🚀"}
+
+
 @app.get("/formats/")
 async def get_formats(url: str):
     try:
         url = normalize_url(url)
 
-        ydl_opts = {
-            "noplaylist": True,
-            "quiet": True,
-            "http_headers": {
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/115.0.0.0 Safari/537.36"
-                )
-            },
-        }
+        ydl_opts = build_ydl_opts("%(id)s.%(ext)s", "video")
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=False)
             formats = info.get("formats", [])
 
-            video_formats = []
-            audio_formats = []
+            video_formats, audio_formats = [], []
             for f in formats:
                 if f.get("vcodec") != "none" and f.get("acodec") != "none":
                     video_formats.append({
@@ -79,57 +126,12 @@ def download_video(url: str, format: str = "video", format_id: str = None):
     try:
         url = normalize_url(url)
         video_id = str(uuid.uuid4())
+        outtmpl = f"{video_id}.%(ext)s"
 
         if format.lower() not in ["video", "audio"]:
             raise HTTPException(status_code=400, detail="Invalid format. Use 'video' or 'audio'.")
 
-        ydl_opts = {
-            "outtmpl": f"{video_id}.%(ext)s",
-            "noplaylist": True,
-            "quiet": True,
-            "http_headers": {
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/115.0.0.0 Safari/537.36"
-                )
-            },
-        }
-
-        if format.lower() == "video":
-            if format_id:
-                ydl_opts.update({
-                    "format": format_id,
-                    "merge_output_format": "mp4",
-                })
-            else:
-                ydl_opts.update({
-                    "format": "bestvideo+bestaudio/best",
-                    "merge_output_format": "mp4",
-                })
-        else:  # audio
-            if format_id:
-                ydl_opts.update({
-                    "format": format_id,
-                    "extractaudio": True,
-                    "audioformat": "mp3",
-                    "postprocessors": [{
-                        "key": "FFmpegExtractAudio",
-                        "preferredcodec": "mp3",
-                        "preferredquality": "192",
-                    }],
-                })
-            else:
-                ydl_opts.update({
-                    "format": "bestaudio",
-                    "extractaudio": True,
-                    "audioformat": "mp3",
-                    "postprocessors": [{
-                        "key": "FFmpegExtractAudio",
-                        "preferredcodec": "mp3",
-                        "preferredquality": "192",
-                    }],
-                })
+        ydl_opts = build_ydl_opts(outtmpl, format.lower(), format_id)
 
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
