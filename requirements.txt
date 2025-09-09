@@ -1,5 +1,5 @@
 fastapi
 uvicorn
-yt-dlp
+yt-dlp>=2025.9.9
 starlette
 python-multipart
