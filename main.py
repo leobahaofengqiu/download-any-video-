@@ -6,6 +6,7 @@ import yt_dlp
 import os
 import uuid
 import logging
+import uvicorn
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -39,7 +40,7 @@ def download_video(url: str):
             "merge_output_format": "mp4",
             "outtmpl": output_template,
             "noplaylist": True,
-            "quiet": False,  # Set to True for production
+            "quiet": False,
             "no_warnings": False,
             "extractaudio": False,
             "audioformat": "mp3",
@@ -53,13 +54,11 @@ def download_video(url: str):
             if not info:
                 raise HTTPException(status_code=400, detail="Could not extract video information")
             
-            # Find the downloaded file
             video_title = info.get("title", "video")
             ext = info.get("ext", "mp4")
             downloaded_file = f"{video_id}.{ext}"
             
             if not os.path.exists(downloaded_file):
-                # Try alternative naming
                 possible_files = [f for f in os.listdir(".") if f.startswith(video_id)]
                 if possible_files:
                     downloaded_file = possible_files[0]
@@ -68,9 +67,8 @@ def download_video(url: str):
         
         logger.info(f"Download successful: {downloaded_file}")
         
-        # Clean filename for response
         safe_filename = "".join(c for c in video_title if c.isalnum() or c in (' ', '-', '_')).rstrip()
-        safe_filename = f"{safe_filename[:50]}.mp4"  # Limit filename length
+        safe_filename = f"{safe_filename[:50]}.mp4"
         
         return FileResponse(
             path=downloaded_file,
@@ -87,3 +85,8 @@ def download_video(url: str):
     except Exception as e:
         logger.error(f"Unexpected error: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Server error: {str(e)}")
+
+# 🚀 Railway fix: run with assigned PORT
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run("main:app", host="0.0.0.0", port=port, reload=False)
