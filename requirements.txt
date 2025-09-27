@@ -3,3 +3,4 @@ uvicorn
 git+https://github.com/yt-dlp/yt-dlp@master
 starlette
 python-multipart
+TikTokApi
