@@ -6,7 +6,7 @@ import yt_dlp
 import os
 import uuid
 import logging
-from TikTokApi import TikTokApi
+import requests
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -41,7 +41,6 @@ def download_video(url: str):
         "quiet": False,
         "no_warnings": True,
         "ignoreerrors": False,
-        # "cookies_from_browser": ("chrome",),  # optional
     }
 
     # ---- Try yt-dlp first ----
@@ -81,26 +80,40 @@ def download_video(url: str):
         )
 
     except Exception as e:
-        logger.warning(f"yt-dlp failed, fallback to TikTokApi. Error: {str(e)}")
+        logger.warning(f"yt-dlp failed, fallback to TikTok requests method. Error: {str(e)}")
 
-        # ---- Fallback: TikTokApi ----
+        # ---- Fallback: requests to TikTok ----
         try:
             if "tiktok.com" not in url:
                 raise HTTPException(
                     status_code=400, detail="Unsupported platform for fallback"
                 )
 
-            api = TikTokApi()
-            vid = url.split("/")[-1].split("?")[0]  # extract video ID
-            video = api.video(id=vid)
-            info = video.info()
+            # Resolve shortened TikTok URL
+            session = requests.Session()
+            resp = session.head(url, allow_redirects=True)
+            final_url = resp.url
 
-            play_url = info["video"]["playAddr"]
+            # Extract video ID
+            if "/video/" not in final_url:
+                raise Exception("Invalid TikTok URL")
+
+            vid = final_url.split("/video/")[1].split("?")[0]
+
+            # Call TikTok unofficial API
+            api_url = f"https://api16-normal-c-useast1a.tiktokv.com/aweme/v1/feed/?aweme_id={vid}"
+            headers = {
+                "User-Agent": "okhttp",
+            }
+            r = session.get(api_url, headers=headers)
+            data = r.json()
+
+            play_url = data["aweme_list"][0]["video"]["play_addr"]["url_list"][0]
 
             return RedirectResponse(url=play_url)
 
         except Exception as e2:
             raise HTTPException(
                 status_code=500,
-                detail=f"Both yt-dlp and TikTokApi failed: {str(e2)}",
+                detail=f"Both yt-dlp and TikTok fallback failed: {str(e2)}",
             )
