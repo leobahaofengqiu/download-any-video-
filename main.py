@@ -1,11 +1,14 @@
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, RedirectResponse
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.background import BackgroundTask
 import yt_dlp
 import os
 import uuid
 import logging
+
+# TikTokApi import
+from TikTokApi import TikTokApi
 
 # Setup logging
 logging.basicConfig(level=logging.INFO)
@@ -29,56 +32,39 @@ def root():
 
 @app.get("/download/")
 def download_video(url: str):
+    video_id = str(uuid.uuid4())
+    output_template = f"{video_id}.%(ext)s"
+
+    ydl_opts = {
+        "format": "best[height<=720]/bestvideo[height<=720]+bestaudio/best",
+        "merge_output_format": "mp4",
+        "outtmpl": output_template,
+        "noplaylist": True,
+        "quiet": False,
+        "no_warnings": True,
+        "ignoreerrors": False,
+        # 'cookies_from_browser': ('chrome',),  # optional
+    }
+
     try:
-        logger.info(f"Download request for URL: {url}")
-
-        video_id = str(uuid.uuid4())
-        output_template = f"{video_id}.%(ext)s"
-
-        ydl_opts = {
-            "format": "best[height<=720]/bestvideo[height<=720]+bestaudio/best",
-            "merge_output_format": "mp4",
-            "outtmpl": output_template,
-            "noplaylist": True,
-            "quiet": False,
-            "no_warnings": True,
-            "extractaudio": False,
-            "audioformat": "mp3",
-            "ignoreerrors": False,
-            # --- Added cookie support for Shorts and restricted videos ---
-            # Use your exported cookies file here (from browser)
-            # 'cookiefile': 'cookies.txt',  
-            # Or automatic from browser
-            'cookies_from_browser': ('chrome',),  # 'firefox', 'edge' etc.
-        }
-
+        # ---- Try yt-dlp first ----
+        logger.info(f"Trying yt-dlp for {url}")
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            logger.info("Extracting video info...")
             info = ydl.extract_info(url, download=True)
 
             if not info:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Could not extract video information"
-                )
+                raise Exception("yt-dlp could not extract info")
 
-            # Find the downloaded file
             ext = info.get("ext", "mp4")
             downloaded_file = f"{video_id}.{ext}"
+
             if not os.path.exists(downloaded_file):
-                # Try alternative naming
                 possible_files = [f for f in os.listdir(".") if f.startswith(video_id)]
                 if possible_files:
                     downloaded_file = possible_files[0]
                 else:
-                    raise HTTPException(
-                        status_code=500,
-                        detail="Download completed but file not found"
-                    )
+                    raise Exception("Download completed but file not found")
 
-        logger.info(f"Download successful: {downloaded_file}")
-
-        # Clean filename for response
         video_title = info.get("title", "video")
         safe_filename = "".join(c for c in video_title if c.isalnum() or c in (" ", "-", "_")).rstrip()
         safe_filename = f"{safe_filename[:50]}.mp4"
@@ -92,16 +78,25 @@ def download_video(url: str):
             ),
         )
 
-    except yt_dlp.DownloadError as e:
-        logger.error(f"yt-dlp download error: {str(e)}")
-        raise HTTPException(
-            status_code=400,
-            detail=f"Download failed: {str(e)}"
-        )
-
     except Exception as e:
-        logger.error(f"Unexpected error: {str(e)}")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Server error: {str(e)}"
-        )
+        logger.warning(f"yt-dlp failed, fallback to TikTokApi. Error: {str(e)}")
+
+        # ---- Fallback: TikTokApi ----
+        try:
+            if "tiktok.com" not in url:
+                raise HTTPException(status_code=400, detail="Unsupported platform for fallback")
+
+            with TikTokApi() as api:
+                vid = url.split("/")[-1].split("?")[0]
+                video = api.video(id=vid)
+                info = video.info()
+                play_url = info["video"]["playAddr"]
+
+                # instead of downloading on server, redirect to TikTok CDN link
+                return RedirectResponse(url=play_url)
+
+        except Exception as e2:
+            raise HTTPException(
+                status_code=500,
+                detail=f"Both yt-dlp and TikTokApi failed: {str(e2)}"
+            )
