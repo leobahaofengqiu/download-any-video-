@@ -6,8 +6,6 @@ import yt_dlp
 import os
 import uuid
 import logging
-
-# TikTokApi import
 from TikTokApi import TikTokApi
 
 # Setup logging
@@ -43,11 +41,11 @@ def download_video(url: str):
         "quiet": False,
         "no_warnings": True,
         "ignoreerrors": False,
-        # 'cookies_from_browser': ('chrome',),  # optional
+        # "cookies_from_browser": ("chrome",),  # optional
     }
 
+    # ---- Try yt-dlp first ----
     try:
-        # ---- Try yt-dlp first ----
         logger.info(f"Trying yt-dlp for {url}")
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             info = ydl.extract_info(url, download=True)
@@ -66,7 +64,9 @@ def download_video(url: str):
                     raise Exception("Download completed but file not found")
 
         video_title = info.get("title", "video")
-        safe_filename = "".join(c for c in video_title if c.isalnum() or c in (" ", "-", "_")).rstrip()
+        safe_filename = "".join(
+            c for c in video_title if c.isalnum() or c in (" ", "-", "_")
+        ).rstrip()
         safe_filename = f"{safe_filename[:50]}.mp4"
 
         return FileResponse(
@@ -74,7 +74,9 @@ def download_video(url: str):
             media_type="video/mp4",
             filename=safe_filename,
             background=BackgroundTask(
-                lambda: os.remove(downloaded_file) if os.path.exists(downloaded_file) else None
+                lambda: os.remove(downloaded_file)
+                if os.path.exists(downloaded_file)
+                else None
             ),
         )
 
@@ -84,19 +86,21 @@ def download_video(url: str):
         # ---- Fallback: TikTokApi ----
         try:
             if "tiktok.com" not in url:
-                raise HTTPException(status_code=400, detail="Unsupported platform for fallback")
+                raise HTTPException(
+                    status_code=400, detail="Unsupported platform for fallback"
+                )
 
-            with TikTokApi() as api:
-                vid = url.split("/")[-1].split("?")[0]
-                video = api.video(id=vid)
-                info = video.info()
-                play_url = info["video"]["playAddr"]
+            api = TikTokApi()
+            vid = url.split("/")[-1].split("?")[0]  # extract video ID
+            video = api.video(id=vid)
+            info = video.info()
 
-                # instead of downloading on server, redirect to TikTok CDN link
-                return RedirectResponse(url=play_url)
+            play_url = info["video"]["playAddr"]
+
+            return RedirectResponse(url=play_url)
 
         except Exception as e2:
             raise HTTPException(
                 status_code=500,
-                detail=f"Both yt-dlp and TikTokApi failed: {str(e2)}"
+                detail=f"Both yt-dlp and TikTokApi failed: {str(e2)}",
             )
